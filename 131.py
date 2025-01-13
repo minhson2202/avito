@@ -90,7 +90,7 @@ def fetch_vacancies_worker(task):
     access_token, location, business_area, url, headers, proxy = task
     current_page = 1
     all_vacancies = []
-    seen_vacancies = set()  # To avoid duplicates
+    seen_vacancies = set()  # To track unique vacancy IDs
 
     params = {
         "locations": location["id"],
@@ -99,35 +99,32 @@ def fetch_vacancies_worker(task):
         "page": current_page,
     }
 
-    with request_semaphore:  
+    with request_semaphore:
         with requests.Session() as session:
             try:
-                while True:  
+                while True:
                     data = fetch_vacancies_with_session(session, url, headers, params, proxy)
                     if data:
                         vacancies = data.get("vacancies", [])
                         for vacancy in vacancies:
-                            vacancy_id = vacancy.get("id")  # Assuming vacancy has a unique 'id'
-                          #  if vacancy_id and vacancy_id not in seen_vacancies:
-                        all_vacancies.append(vacancy)
+                            vacancy_id = vacancy.get("id")
+                            if vacancy_id and vacancy_id not in seen_vacancies:
+                                all_vacancies.append(vacancy)
                                 seen_vacancies.add(vacancy_id)
-                        export_vacancies_to_csv(vacancies, filename="dv.csv")
+                        export_vacancies_to_csv(all_vacancies, filename="dv.csv")
 
-                        # Check meta data for pagination information
+                        # Pagination
                         meta = data.get("meta", {})
                         total_pages = meta.get("pages", 1)
-
                         if current_page >= total_pages:
                             break
-
                         current_page += 1
-                        params["page"] = current_page  
+                        params["page"] = current_page
 
             except Exception as e:
                 print(f"Error fetching vacancies for location {location['name']} and business area {business_area['name']} with proxy {proxy}: {e}")
-    
-    return all_vacancies
 
+    return all_vacancies
 
 
 def process_vacancies_multiprocessing(access_token, locations, business_areas, url, headers, processes=2):
