@@ -88,9 +88,8 @@ def export_vacancies_to_csv(vacancies, filename="dv.csv"):
 
 def fetch_vacancies_worker(task):
     access_token, location, business_area, url, headers, proxy = task
-    current_page = 1
-    all_vacancies = []
-    seen_vacancies = set()  # To track unique vacancy IDs
+    current_page = 1  
+    all_vacancies = []  
 
     params = {
         "locations": location["id"],
@@ -99,54 +98,58 @@ def fetch_vacancies_worker(task):
         "page": current_page,
     }
 
-    with request_semaphore:
+    with request_semaphore:  
         with requests.Session() as session:
             try:
-                while True:
+                while True:  
                     data = fetch_vacancies_with_session(session, url, headers, params, proxy)
                     if data:
                         vacancies = data.get("vacancies", [])
-                        for vacancy in vacancies:
-                            vacancy_id = vacancy.get("id")
-                            if vacancy_id and vacancy_id not in seen_vacancies:
-                                all_vacancies.append(vacancy)
-                                seen_vacancies.add(vacancy_id)
-                        export_vacancies_to_csv(all_vacancies, filename="dv.csv")
+                        all_vacancies.extend(vacancies)  # Collect the fetched vacancies
+                        export_vacancies_to_csv(vacancies, filename="dv.csv")  # Export to CSV
 
-                        # Pagination
+                        # Check meta data for pagination information
                         meta = data.get("meta", {})
                         total_pages = meta.get("pages", 1)
+
                         if current_page >= total_pages:
                             break
+
                         current_page += 1
-                        params["page"] = current_page
+                        params["page"] = current_page  
 
             except Exception as e:
                 print(f"Error fetching vacancies for location {location['name']} and business area {business_area['name']} with proxy {proxy}: {e}")
-
+    
     return all_vacancies
 
 
 def process_vacancies_multiprocessing(access_token, locations, business_areas, url, headers, processes=2):
-    tasks = [
-        (access_token, location, business_area, url, headers, proxies[i % len(proxies)])
-        for i, (location, business_area) in enumerate(
-            [(location, business_area) for location in locations for business_area in business_areas]
-        )
-    ]
-    
+    # Use a set to track unique combinations of location and business area
+    unique_tasks = set()
+    tasks = []  # Initialize the tasks list
+
+    # Generate tasks ensuring uniqueness
+    for location in locations:
+        for business_area in business_areas:
+            task_key = (location['id'], business_area['id'])  # Unique identifier for the task
+            if task_key not in unique_tasks:
+                unique_tasks.add(task_key)
+                tasks.append((access_token, location, business_area, url, headers, proxies[len(unique_tasks) % len(proxies)]))
+
     all_vacancies = []
 
+    # Use multiprocessing pool to process tasks
     with mp.Pool(processes=processes) as pool:
-        results = pool.map(fetch_vacancies_worker, tasks) 
+        results = pool.map(fetch_vacancies_worker, tasks)
 
+    # Collect all results from the workers
     for result in results:
         if result:
             all_vacancies.extend(result)
 
     print(f"Total vacancies fetched: {len(all_vacancies)}")
     return all_vacancies
-
 
 def get_access_token():
     url = "https://api.avito.ru/token"
@@ -175,17 +178,21 @@ def load_locations_from_xml(xml_file):
     seen_ids = set()  
 
     try: 
+        # Parse the XML
         tree = ET.parse(xml_file)
         root = tree.getroot()
 
+        # Iterate over each region in the XML
         for region in root.findall(".//Region"):
             region_id = region.get("Id")
             region_name = region.get("Name")
             
+            # Ensure the region has a unique ID
             if region_id and region_name and region_id not in seen_ids:
                 locations.append({"id": region_id, "name": region_name, "type": "Region"})
                 seen_ids.add(region_id)
 
+                # Process Districts in the region
                 for district in region.findall(".//District"):
                     district_id = district.get("Id")
                     district_name = district.get("Name")
@@ -197,6 +204,7 @@ def load_locations_from_xml(xml_file):
                         })
                         seen_ids.add(district_id)
 
+                # Process Subways in the region
                 for subway in region.findall(".//Subway"):
                     subway_id = subway.get("Id")
                     subway_name = subway.get("Name")
